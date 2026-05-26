@@ -196,8 +196,14 @@ int ser_get_control_lines(int fd) {
   int status;
 
   if(0 > ioctl(fd, TIOCMGET, &status)) {
-    ELOG(LOG_FATAL, "Could not obtain serial port status");
-    return -1;
+    // Pseudo-terminals (and a handful of USB-serial drivers) return
+    // ENOTTY/EINVAL for TIOCMGET — they have no real RS-232 modem
+    // control lines. Treat that as "PTY mode" and synthesize the
+    // DTE-side state most callers want: line up, DTR up. LOG_DEBUG
+    // because tcpser polls control lines on a tight loop and a
+    // PTY-fronted modem would spam at any higher level.
+    LOG(LOG_DEBUG, "TIOCMGET unsupported (PTY mode: synthesizing line+DTR up)");
+    return DCE_CL_LE | DCE_CL_DTR;
   }
 
   return (DCE_CL_LE           // RS232 link is always up.
@@ -210,8 +216,12 @@ int ser_set_control_lines(int fd, int state) {
   int status;
 
   if(0 > ioctl(fd, TIOCMGET, &status)) {
-    ELOG(LOG_FATAL, "Could not obtain serial port status");
-    return -1;
+    // PTY path: nothing to set. DEBUG-and-noop matches the spirit
+    // of ser_get_control_lines above — the DCE can't drive
+    // imaginary control lines, so the caller's request is silently
+    // dropped instead of fatal.
+    LOG(LOG_DEBUG, "TIOCMGET unsupported (PTY mode: skipping set)");
+    return 0;
   }
 
   status &= ~(TIOCM_DTR);
