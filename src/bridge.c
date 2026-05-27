@@ -5,6 +5,7 @@
 #include <stdlib.h>       // for exit...
 #include <sys/param.h>
 #include <sys/time.h>
+#include <poll.h>         // for POLLHUP / POLLERR after a read()=0
 #include <pthread.h>
 
 #include "util.h"
@@ -424,11 +425,24 @@ void *bridge_task(void *arg) {
         } else {
           mdm_parse_data(cfg, buf, res);
         }
+      } else if(res == 0) {
+        // read() returning 0 on a TTY is ambiguous: it can be a
+        // true EOF (slave side closed — the PTY-equivalent of DTR
+        // drop) OR a VMIN=0/VTIME>0 timeout with no bytes. Use a
+        // non-blocking poll(POLLHUP|POLLERR) to disambiguate: if
+        // the kernel has the hangup bit set, the slave really did
+        // close and we treat it as DTR drop; otherwise it's a
+        // timeout and we ignore.
+        struct pollfd pfd;
+        pfd.fd = cfg->dce_data.ifd;
+        pfd.events = 0;  // we only care about HUP/ERR revents
+        pfd.revents = 0;
+        if(poll(&pfd, 1, 0) > 0
+           && (pfd.revents & (POLLHUP | POLLERR | POLLNVAL))) {
+          LOG(LOG_INFO, "POLLHUP on serial port (DTE closed — PTY-equivalent of DTR drop)");
+          mdm_disconnect(cfg, FALSE);
+        }
       }
-      // Note: read returning 0 cannot be reliably distinguished from
-      // EOF on Linux TTYs because VMIN=0/VTIME>0 also returns 0 on
-      // timeout. An EOF-as-DTR-drop signal needs a poll-on-POLLHUP
-      // mechanism instead; left as a follow-up.
     }
     if (FD_ISSET(cfg->wp[0][0], &readfs)) {  // control pipe
       res = readPipe(cfg->wp[0][0], buf, sizeof(buf) - 1);
