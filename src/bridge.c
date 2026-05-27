@@ -424,18 +424,11 @@ void *bridge_task(void *arg) {
         } else {
           mdm_parse_data(cfg, buf, res);
         }
-      } else if(res == 0) {
-        // EOF on the serial fd is the PTY-equivalent of DTR drop —
-        // on a real RS-232 serial port we'd see the change via the
-        // control-line watcher (ctrl_thread); on a pseudo-terminal
-        // those ioctls don't exist, so close-of-slave-by-DTE is
-        // signalled here as ser_read returning 0. Treat as DTR
-        // drop: tear down any active call and return to command
-        // mode. Idempotent — mdm_disconnect is a no-op when not
-        // connected.
-        LOG(LOG_INFO, "EOF on serial port (DTE closed; PTY-equivalent of DTR drop)");
-        mdm_disconnect(cfg, FALSE);
       }
+      // Note: read returning 0 cannot be reliably distinguished from
+      // EOF on Linux TTYs because VMIN=0/VTIME>0 also returns 0 on
+      // timeout. An EOF-as-DTR-drop signal needs a poll-on-POLLHUP
+      // mechanism instead; left as a follow-up.
     }
     if (FD_ISSET(cfg->wp[0][0], &readfs)) {  // control pipe
       res = readPipe(cfg->wp[0][0], buf, sizeof(buf) - 1);
